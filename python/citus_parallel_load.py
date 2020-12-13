@@ -16,7 +16,7 @@ def CreateConnection(theConnectionDict):
     This method will get a connection. Need to make sure that the DB is set correctly.
     """
     
-    connection = psycopg2.connect(host=theConnectionDict['host'], database=theConnectionDict['db'], user=theConnectionDict['user'], port=theConnectionDict['port'])
+    connection = psycopg2.connect(host=theConnectionDict['host'], database=theConnectionDict['db'], user=theConnectionDict['user'], port=theConnectionDict['port'], password='haynes')
 
     return connection
 
@@ -24,7 +24,7 @@ def ExecuteQuery(pgCon, query):
     
     pgCur = extras.DictCursor(pgCon)
     try:
-        #pgCur.execute(query)
+        pgCur.execute(query)
         print(query)
     except:
         print("ERROR...", query)
@@ -106,9 +106,10 @@ def LoadGeomTable(pgCon, geomFile, pgTableName):
     """
 
     pgCur = pgCon.cursor()
-    print("Copying files")
+    print("Copying {}".format(geomFile))
     with open(geomFile, 'r') as f:
-        f.readline()        
+        f.readline() 
+
         #pgCur.copy_expert("\\COPY {} FROM STDIN WITH CSV HEADER DELIMITER ';'".format(pgTableName), f)
 
         try:
@@ -249,8 +250,9 @@ def argument_parser():
     parser = argparse.ArgumentParser(description= "Module for loading data into CitusDB") 
 
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument('--distributed',action='store_true', dest="dist")
-    group.add_argument('--reference',action='store_false', dest="dist")   
+    group.add_argument('--distributed', dest="dist")
+    group.add_argument('--reference', dest="dist")   
+    group.add_argument('--singletable', dest="dist")   
     
     #All of the required connection information
     parser.add_argument("--host", required=True, type=str, help="Host of database", dest="host")
@@ -264,7 +266,6 @@ def argument_parser():
     #Adding sub parsers requires the order of the arguments to be in a particular pattern
     #Big parser arguments first, sub parser arguments second
     shapefileParser = subparser.add_parser('shapefile')
-    
     shapefileParser.add_argument("--shp", required=True, help="Input file path for the shapefile", dest="shapefilePath")    
 
     csvParser = subparser.add_parser('csv')
@@ -317,7 +318,7 @@ if __name__ == '__main__':
         
         loadingDict = OrderedDict([  ("geomtable", args.inCSV), ("load_time", stopLoadCSV-startLoadCSV), ("build_geom", stopBuildGeom-stopLoadCSV) ])
     
-    if args.dist:
+    if args.dist == 'distributed':
         print("Distributing dataset by column {}".format(args.shardKey))
         startDistribution = timeit.default_timer()
         shardQuery = SetShardCount(args.db, args.partitions)
@@ -331,7 +332,7 @@ if __name__ == '__main__':
         psqlCon.commit()
         indicesDict = OrderedDict([ ("full_time", stopCreateIndices-start),  ("partition_time", stopPartitionTable-startDistribution), ("create_distributed_indices", stopCreateIndices-stopPartitionTable) ])
 
-    else:
+    elif args.dist == 'reference':
         print("Creating Reference table")
         startDistributeTable = timeit.default_timer()
         ExecuteQuery(psqlCon, CreateReferenceTable(args.tableName))
@@ -341,6 +342,13 @@ if __name__ == '__main__':
         stopCreateIndices = timeit.default_timer()
         psqlCon.commit()
         indicesDict = OrderedDict([ ("full_time", stopCreateIndices-start),  ("distribution_time", stopDistributeTable-startDistributeTable), ("create_distributed_indices", stopCreateIndices-stopDistributeTable) ])
+    elif args.dist == 'bigdata':
+        print("Creating Big Geospatial table")
+        startDistributeTable = timeit.default_timer()
+        ExecuteQuery(psqlCon, CreateGeoIndex(args.tableName, "{}_geom_gist".format(args.tableName), "geom") )
+        stopCreateIndices = timeit.default_timer()
+        psqlCon.commit()
+        indicesDict = OrderedDict([ ("full_time", stopCreateIndices-start),  ("distribution_time", 0), ("create_distributed_indices", 0) ])
 
     times = OrderedDict( [("connectionInfo", "XSEDE"), ("platform", "CitusDB"), ("dataset", args.tableName) ])
     times.update(loadingDict)
